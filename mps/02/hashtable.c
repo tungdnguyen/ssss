@@ -23,13 +23,27 @@ hashtable_t *make_hashtable(unsigned long size) {
 
 void ht_put(hashtable_t *ht, char *key, void *val) {
   /* FIXME: the current implementation doesn't update existing entries */
-  unsigned int idx = hash(key) % ht->size;
+  if(val==NULL){
+    return NULL;
+  }
+  unsigned int idx = hash(key)%(ht->size);
+  bucket_t *check = ht -> buckets[idx];
+  while(check){
+    if (strcmp(check->key,key)==0)
+      {
+	check->val = val;
+	return 1;
+      }
+    check = check->next;
+}
+
   bucket_t *b = malloc(sizeof(bucket_t));
   b->key = key;
   b->val = val;
   b->next = ht->buckets[idx];
   ht->buckets[idx] = b;
-}
+  free(check);
+ }
 
 void *ht_get(hashtable_t *ht, char *key) {
   unsigned int idx = hash(key) % ht->size;
@@ -63,7 +77,36 @@ void free_hashtable(hashtable_t *ht) {
 
 /* TODO */
 void  ht_del(hashtable_t *ht, char *key) {
+  unsigned int idx = hash(key)%ht->size;
+  bucket_t *b = ht->buckets[idx];
+  bucket_t *curr = b;
+  if(strcmp(b->key,key)==0){
+    ht->buckets[idx]=b->next;
+    return;
+  }
+  else{
+    b=b->next;
+}
+  while(b) {
+    if(strcmp(b->key,key)==0){
+      curr->next = b->next;
+      
+    }
+    curr=b;
+    b=b->next;
+  }
 }
 
 void  ht_rehash(hashtable_t *ht, unsigned long newsize) {
+  hashtable_t *newht = make_hashtable(newsize);
+  bucket_t *b;
+  unsigned long i;
+  for(i =0; i<ht->size;i++){
+    b=ht->buckets[i];
+    while(b){
+      ht_put(newht,b->key,b->val);
+      b=b->next;
+  }
+  }
+  *ht=*newht;
 }
