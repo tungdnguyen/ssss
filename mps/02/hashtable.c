@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hashtable.h"
-
 /* Daniel J. Bernstein's "times 33" string hash function, from comp.lang.C;
    See https://groups.google.com/forum/#!topic/comp.lang.c/lSKWXiuNOAk */
 unsigned long hash(char *str) {
@@ -22,32 +21,31 @@ hashtable_t *make_hashtable(unsigned long size) {
 }
 
 void ht_put(hashtable_t *ht, char *key, void *val) {
-  /* FIXME: the current implementation doesn't update existing entries */
-  if(val==NULL){
-    return NULL;
-  }
+  // FIXME: the current implementation doesn't update existing entries
   unsigned int idx = hash(key)%(ht->size);
-  bucket_t *check = ht -> buckets[idx];
-  while(check){
-    if (strcmp(check->key,key)==0)
+  bucket_t *b = ht -> buckets[idx];
+  while(b){
+    if (strcmp(b->key,key)==0)
       {
-	check->val = val;
-	return 1;
+	free(key);
+	free(b->val);
+	b->val = val;
+	return;
       }
-    check = check->next;
-}
+    b = b->next;
+  }
 
-  bucket_t *b = malloc(sizeof(bucket_t));
+  b = malloc(sizeof(bucket_t));
   b->key = key;
   b->val = val;
   b->next = ht->buckets[idx];
   ht->buckets[idx] = b;
-  free(check);
  }
 
 void *ht_get(hashtable_t *ht, char *key) {
   unsigned int idx = hash(key) % ht->size;
   bucket_t *b = ht->buckets[idx];
+
   while (b) {
     if (strcmp(b->key, key) == 0) {
       return b->val;
@@ -72,9 +70,20 @@ void ht_iter(hashtable_t *ht, int (*f)(char *, void *)) {
 }
 
 void free_hashtable(hashtable_t *ht) {
-  free(ht); // FIXME: must free all substructures!
+  unsigned long i;
+  for (i=0; i<ht->size; i++) {
+    bucket_t *b = ht->buckets[i];
+    while (b) {
+      bucket_t *temp = b;
+      b = b->next;
+      free(temp->key);
+      free(temp->val);
+      free(temp);
+    }
+  }
+  free(ht->buckets);
+  free(ht);
 }
-
 /* TODO */
 void  ht_del(hashtable_t *ht, char *key) {
   unsigned int idx = hash(key)%ht->size;
@@ -82,6 +91,9 @@ void  ht_del(hashtable_t *ht, char *key) {
   bucket_t *curr = b;
   if(strcmp(b->key,key)==0){
     ht->buckets[idx]=b->next;
+    free(b->key);
+    free(b->val);
+    free(b);
     return;
   }
   else{
@@ -90,6 +102,9 @@ void  ht_del(hashtable_t *ht, char *key) {
   while(b) {
     if(strcmp(b->key,key)==0){
       curr->next = b->next;
+      free(b->key);
+      free(b->val);
+      free(b);
       
     }
     curr=b;
@@ -105,8 +120,12 @@ void  ht_rehash(hashtable_t *ht, unsigned long newsize) {
     b=ht->buckets[i];
     while(b){
       ht_put(newht,b->key,b->val);
+      bucket_t *temp2 = b;
       b=b->next;
+      free(temp2);
   }
   }
+  free(ht->buckets);
   *ht=*newht;
+  free(newht);
 }
