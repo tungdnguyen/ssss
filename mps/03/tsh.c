@@ -161,23 +161,46 @@ int main(int argc, char **argv)
  * background children don't receive SIGINT (SIGTSTP) from the kernel
  * when we type ctrl-c (ctrl-z) at the keyboard.  
  */
+
 void eval(char *cmdline) 
 {
   /* the following code demonstrates how to use parseline --- you'll 
    * want to replace most of it (at least the print statements). */
-  int i, bg;
+  int bg;
   char *argv[MAXARGS];
+  pid_t pid;
+  sigset_t set;
 
   bg = parseline(cmdline, argv);
-  if (bg) {
-    printf("background job requested\n");
+
+  //checks for empty line
+  if (argv[0] == NULL) {
+    return;
   }
-  for (i=0; argv[i] != NULL; i++) {
-    printf("argv[%d]=%s%s", i, argv[i], (argv[i+1]==NULL)?"\n":", ");
+  if (!builtin_cmd(argv)) {
+    sigprocmask(SIG_BLOCK, &set, NULL);
+    //forking and execing a child process
+    if ((pid = fork()) == 0) {
+      sigprocmask(SIG_UNBLOCK, &set, NULL);
+      setpgid(0,0);
+      if (execv(argv[0], argv) < 0) {
+	printf("%s: Command not found\n", argv[0]);
+	exit(0);
+      }
+    }
+    if (!bg) {
+      addjob(jobs, pid, FG, cmdline);
+      sigprocmask(SIG_UNBLOCK, &set, NULL);
+      waitfg(pid);
+    }
+    else {
+      addjob(jobs, pid, BG, cmdline);
+      sigprocmask(SIG_UNBLOCK, &set, NULL);
+      printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+    }
   }
   return;
 }
-
 /* 
  * parseline - Parse the command line and build the argv array.
  * 
@@ -241,6 +264,17 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv) 
 {
+  if (strcmp("quit", argv[0]) == 0) {
+    exit(0);
+  }
+  if (strcmp("jobs", argv[0]) == 0) {
+    listjobs(jobs);
+    return 1;
+  }
+  if (strcmp("bg", argv[0]) == 0 || strcmp("fg", argv[0]) == 0 ) {
+    do_bgfg(argv);
+    return 1;
+  }
   return 0;     /* not a builtin command */
 }
 
@@ -249,6 +283,44 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+  if (argv[1] == NULL) {
+    printf("%s command requires PID or %%jobid argument\n", argv[0]);
+    return;
+  }
+  struct job_t *j = NULL;
+  if (argv[1][0] == '%') {
+    //check if var pass is digit
+    if(!isdigit(argv[1][1])) {
+      printf("%s: argument must be a pid or %%jibid\n", argv[0]);
+      return;
+    }
+    int jid = atoi(&argv[1][1]);
+    if (!(j = getjobjid(jobs, jid)))
+      {
+	printf("%s: no such job\n", argv[1]);
+	return;
+      }
+  }
+  else {
+    if(!isdigit(argv[1][1])) {
+      printf("%s: argument must be a pid or %%jibid\n", argv[0]);
+      return;
+    }
+    pid_t pid = atoi(argv[1]);
+    if (!(j = getjobpid(jobs, pid))) {
+      printf("%s: no such process\n", argv[1]);
+      return;
+    }
+  }
+  kill(-j -> pid, SIGCONT);
+  if (!strcmp(argv[0], "bg")) {
+    j-> state = BG;
+    printf("%d %d %s", j-> jid, j -> pid, j -> cmdline);
+  }
+  else {
+    j -> state = FG;
+    waitfg(j -> pid);
+  }
   return;
 }
 
@@ -257,6 +329,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+  while (fgpid(jobs) == pid)
+ {
+    sleep(1);
+ }
   return;
 }
 
@@ -273,6 +349,22 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+  pid_t pid;
+  int status;
+
+  while ((pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) > 0) {
+    if (WIFSTOPPED(status)) {
+      getjobpid(jobs, pid) -> state = ST;
+      printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(pid), pid, WEXITSTATUS(status));
+    }
+    if (WIFSIGNALED(status)) {
+      printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, WTERMSIG(status));
+      deletejob(jobs, pid);
+    }
+    if (WIFEXITED(status)) {
+      deletejob(jobs, pid);
+    }
+  }
   return;
 }
 
@@ -283,6 +375,8 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+  pid_t pid = fgpid(jobs);
+  kill(-pid, SIGINT);
   return;
 }
 
@@ -293,6 +387,8 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+  pid_t pid = fgpid(jobs);
+  kill(-pid, SIGTSTP);
   return;
 }
 
