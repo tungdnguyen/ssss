@@ -164,8 +164,6 @@ int main(int argc, char **argv)
 
 void eval(char *cmdline) 
 {
-  /* the following code demonstrates how to use parseline --- you'll 
-   * want to replace most of it (at least the print statements). */
   int bg;
   char *argv[MAXARGS];
   pid_t pid;
@@ -189,7 +187,7 @@ void eval(char *cmdline)
       setpgid(0,0);
       if (execvp(argv[0],argv) < 0)
       {
-	printf("%s:Command not found\n", argv[0]);
+	printf("%s: Command not found\n", argv[0]);
 	exit(-1);
       }
    }
