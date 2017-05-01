@@ -1,0 +1,490 @@
+
+CS:APP Cache Lab: Grading Sheet for tnguye48.tar
+
+Part 1: Compiling test framework
+
+gcc -g -Wall -Werror -std=c99 -m64 -o csim csim.c cachelab.c -lm 
+gcc -g -Wall -Werror -std=c99 -m64 -o csim-ref csim-ref.c cachelab.c -lm
+gcc -g -Wall -Werror -std=c99 -m64 -o test-csim test-csim.c 
+gcc -g -Wall -Werror -std=c99 -m64 -O0 -c trans.c
+gcc -g -Wall -Werror -std=c99 -m64 -o test-trans test-trans.c cachelab.c trans.o 
+gcc -g -Wall -Werror -std=c99 -m64 -O0 -o tracegen tracegen.c trans.o cachelab.c
+
+
+Part 2: Running the driver
+
+Part A: Testing cache simulator
+Running ./test-csim
+                        Your simulator     Reference simulator
+Points (s,E,b)    Hits  Misses  Evicts    Hits  Misses  Evicts
+     3 (1,1,1)       9       8       6       9       8       6  traces/yi2.trace
+     3 (4,2,4)       4       5       2       4       5       2  traces/yi.trace
+     3 (2,1,4)       2       3       1       2       3       1  traces/dave.trace
+     3 (2,1,3)     167      71      67     167      71      67  traces/trans.trace
+     3 (2,2,3)     201      37      29     201      37      29  traces/trans.trace
+     3 (2,4,3)     212      26      10     212      26      10  traces/trans.trace
+     3 (5,1,5)     231       7       0     231       7       0  traces/trans.trace
+     6 (5,1,5)  265189   21775   21743  265189   21775   21743  traces/long.trace
+    27
+
+
+Part B: Testing transpose function
+Running ./test-trans -M 32 -N 32
+Running ./test-trans -M 64 -N 64
+Running ./test-trans -M 61 -N 67
+
+Cache Lab summary:
+                        Points   Max pts      Misses
+Csim correctness          27.0        27
+Trans perf 32x32           8.0         8         287
+Trans perf 64x64           7.4         8        1355
+Trans perf 61x67          10.0        10        1913
+          Total points    52.4        53
+
+AUTORESULT_STRING=52.4:287:1355:1913
+
+
+Part 3: Grade
+
+
+Score : 52.4 / 53
+
+Part 4: Handin files for tnguye48.tar
+
+
+*** csim.c ***
+#include "cachelab.h"
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <getopt.h>
+#define BUFFER_SIZE 1024
+typedef struct{
+  int valid;
+  int tag;
+  int timestamp;
+}line_t;
+typedef struct{
+  line_t *lines;
+}set_t;
+
+typedef struct{
+  int s;
+  int b;
+  int E;
+  set_t *sets;
+}cache_t;
+
+typedef struct{
+  int hit;
+  int miss;
+  int eviction;
+}result_t;
+
+void printHelpMessage(char *argv[]);
+void lineProcess(cache_t *cache,result_t *result,unsigned long int memory_address,int verbose);
+void changeTimestamp(cache_t *cache, int set_index, int E);
+
+int main(int argc, char *argv[]){
+
+  cache_t cache;
+  result_t result;
+  result.hit = 0, result.miss = 0, result.eviction = 0;
+  int arg,verbose=0;
+  cache.s = 0,cache.E = 0,cache.b = 0;
+  char *trace;
+  while ((arg = getopt(argc, argv, "hvs:E:b:t:")) != -1) {
+    switch(arg) {
+    case 'h':
+      printHelpMessage(argv);
+      break;
+    case 'v':
+      verbose = 1;
+      break;
+    case 's':
+      cache.s = atoi(optarg);
+      break;
+    case 'E':
+      cache.E = atoi(optarg);
+      break;
+    case 'b':
+      cache.b = atoi(optarg);
+      break;
+    case 't':
+      trace = optarg;
+      break;
+    default:
+      exit(1);
+    }
+  }
+
+  //cache initialize
+  int number_of_set = pow(2,cache.s);
+  cache.sets = (set_t *)malloc(number_of_set*sizeof(set_t));
+  for (int i =0; i <number_of_set;i++)
+    {
+      cache.sets[i].lines=(line_t *)malloc(cache.E*sizeof(line_t));
+    }
+
+  for (int i=0;i<number_of_set;i++)
+    {
+      for(int j =0;j<cache.E;j++)
+        {
+	  cache.sets[i].lines[j].valid = 0;
+	}
+    }
+
+  unsigned long int memory_address;
+  int size;
+  char command;
+
+  //read in the file and start executing
+  FILE *readFile  = fopen(trace,"r");
+  if(readFile == NULL){
+    printf("cannot open file\n");
+  }
+  else
+    {
+      char str[BUFFER_SIZE];
+      while(fgets(str,BUFFER_SIZE,readFile)!=NULL)
+        {
+
+	  if(str[0]!='I')
+	    {
+	      if(verbose == 1)
+		{
+		  printf("%s",str);
+		}
+	      sscanf(str+2,"%lx,%x",&memory_address,&size);
+	      command = str[1];
+	      if(command == 'L' || command == 'S')
+		{
+		  lineProcess(&cache,&result,memory_address,verbose);
+		  printf("\n");
+		}
+	      else if(str[1] == 'M')
+		{
+		  lineProcess(&cache,&result,memory_address,verbose);
+		  printf("\n");
+		  lineProcess(&cache,&result,memory_address,verbose);
+		  printf("\n");
+		}
+	    }
+	}
+      fclose(readFile);
+
+    }
+
+  printSummary(result.hit,result.miss,result.eviction);
+}
+
+void lineProcess(cache_t *cache,result_t *result,unsigned long int memory_address,int verbose)
+{
+  //int time = 0;
+  //printf("address %lx",memory_address);
+  unsigned long int tag = memory_address >> (cache->s+cache->b);
+  unsigned long int temp = (1<<cache->s)-1;
+  unsigned long int set_index = (memory_address>>cache->b)&temp;
+  //check for a hit
+  for (int i =0;i<cache->E;i++)
+    {
+      //if hit 
+      if((cache->sets[set_index].lines[i].tag==tag)&&(cache->sets[set_index].lines[i].valid == 1))
+	{
+	  result->hit ++;
+	  //cache->sets[set_index].lines[i].timestamp = time;
+	  //time ++;
+	  if(verbose == 1)
+	    {
+	      printf("Hit ");
+	    }
+	  changeTimestamp(cache,set_index,i);
+	  return;
+	}
+    }
+  //if miss
+  result -> miss ++;
+  if( verbose == 1)
+    {
+      printf("Miss ");
+    }
+  //if we don't need to evict => choose the first one that's available
+  for(int i = 0; i<cache->E;i++)
+    {
+      if(cache->sets[set_index].lines[i].valid == 0)
+	{
+	  cache->sets[set_index].lines[i].valid = 1;
+	  cache->sets[set_index].lines[i].tag = tag;
+	  //cache->sets[set_index].lines[i].timestamp = time;
+	  //time++;
+	  changeTimestamp(cache,set_index,i);
+	  return;
+
+	}
+    }
+  //If we cannot find a good space, we will need to evict
+  result -> eviction++;
+  if(verbose == 1)
+    {
+      printf("Evict ");
+    }
+
+  //Let's evict
+  for (int i = 0; i < cache->E; i++)
+    {
+      if (cache->sets[set_index].lines[i].timestamp == 1)
+	{
+	  cache->sets[set_index].lines[i].valid = 1;
+	  cache->sets[set_index].lines[i].tag = tag;
+	  changeTimestamp(cache,set_index, i);
+	  return;
+	}
+    }
+  //looking for oldest item
+  //old way of making time stamp, somehow it messes up
+  //int lowest=cache->sets[set_index].lines[0].timestamp;
+  //int index_of_lowest=0;
+  //for (int i =1; i<cache->E;i++)
+  //{
+  //if(cache->sets[set_index].lines[i].timestamp<lowest)
+  //{
+  //lowest = cache->sets[set_index].lines[i].timestamp;
+  //index_of_lowest = i;
+  //} 
+  //}
+  //let's evict
+  //cache->sets[set_index].lines[index_of_lowest].tag = tag;
+  //cache->sets[set_index].lines[index_of_lowest].timestamp=time;
+  //time++;
+  return;
+}
+
+void changeTimestamp(cache_t *cache, int set_index, int E) 
+{
+  int i;
+  for (i = 0; i<cache->E; i++) 
+    {
+      if ((cache->sets[set_index].lines[i].valid)&&(cache->sets[set_index].lines[i].timestamp > cache->sets[set_index].lines[E].timestamp)) 
+	{
+	  cache->sets[set_index].lines[i].timestamp--;
+	}
+    }
+  cache->sets[set_index].lines[E].timestamp = cache->E;
+  return;
+}
+
+void printHelpMessage(char *argv[]){
+  printf("\n");
+  printf("Usage: %s [-hv] -s <num> -E <num> -b <num> -t <file>\n", argv[0]);
+  printf("Options:\n");
+  printf("  -h         Print this help message.\n");
+  printf("  -v         Optional verbose flag.\n");
+  printf("  -s <num>   Number of set index bits.\n");
+  printf("  -E <num>   Number of lines per set.\n");
+  printf("  -b <num>   Number of block offset bits.\n");
+  printf("  -t <file>  Trace file.\n\n");
+  printf("Examples:\n");
+  printf("  linux>  %s -s 4 -E 1 -b 4 -t traces/yi.trace\n", argv[0]);
+  printf("  linux>  %s -v -s 8 -E 2 -b 4 -t traces/yi.trace\n", argv[0]);
+  printf("\n");
+  return;
+} 
+
+*** trans.c ***
+/* 
+ * trans.c - Matrix transpose B = A^T
+ *
+ * Each transpose function must have a prototype of the form:
+ * void trans(int M, int N, int A[N][M], int B[M][N]);
+ *
+ * A transpose function is evaluated by counting the number of misses
+ * on a 1KB direct mapped cache with a block size of 32 bytes.
+ */ 
+#include <stdio.h>
+#include "cachelab.h"
+
+int is_transpose(int M, int N, int A[N][M], int B[M][N]);
+
+/* 
+ * transpose_submit - This is the solution transpose function that you
+ *     will be graded on for Part B of the assignment. Do not change
+ *     the description string "Transpose submission", as the driver
+ *     searches for that string to identify the transpose function to
+ *     be graded. 
+ */
+char transpose_submit_desc[] = "Transpose submission";
+void transpose_submit(int M, int N, int A[N][M], int B[M][N])
+{
+  //FIRST CASE 61x67 =========> DONE!
+  int outer_column,outer_row,row,column,diagonal,tmp; 
+  if(N == 67 && M == 61)
+    {
+      //outer column,outer row that define 8x8 block
+      for (outer_column=0;outer_column<M;outer_column += 8)
+        {
+	  for(outer_row=0;outer_row<N;outer_row+=8)
+            {
+	      //now check for each index in the block 
+	      //for each row in block
+	      for(row=outer_row;(row<outer_row+8)&&(row<N);row++)
+                {
+		  //for each column in row
+		  for(column=outer_column;(column<outer_column+8)&&(column<M);column++)
+                    {
+		      B[column][row]=A[row][column];
+                    }
+
+                }
+            }
+        }
+    }
+
+  //NOW GO TO 32 x 32 
+  else if (N == 32 && M == 32)
+    {
+      for (outer_column = 0; outer_column < M; outer_column += 8) 
+        { 
+	  for (outer_row = 0; outer_row < N; outer_row += 8) 
+            {
+	      for (row = outer_row; (row < outer_row + 8)&&(row<N); row++) 
+                {
+		  for (column = outer_column;(column < outer_column + 8)&&(column<M);column++) 
+                    {
+		      if (row != column) 
+                        {
+			  B[column][row] = A[row][column];
+                        } 
+		      else 
+                        {
+			  //diagonal value can cause misses
+			  tmp = A[row][column];
+			  diagonal = row;
+                        }
+                    }
+		  if (outer_row == outer_column) 
+                    {
+		      B[diagonal][diagonal] = tmp; 
+                    }
+                }   
+            }
+
+        }
+    }
+
+  //The hardest one
+  else if (N==64 && M == 64)
+    {
+      int *loc;
+      int offset;
+      int temp0,temp1,temp2,temp3,temp4,temp5,temp6,temp7;
+      for (outer_column = 0; outer_column < N; outer_column += 8)
+        {
+  	  for (outer_row = 0; outer_row < M; outer_row += 8)
+            {
+
+  	      temp4 = A[outer_row][outer_column+4];
+  	      temp5 = A[outer_row][outer_column+5];
+  	      temp6 = A[outer_row][outer_column+6];
+  	      temp7 = A[outer_row][outer_column+7];
+
+  	      for (offset = outer_row; offset < outer_row+8; offset++)
+                {
+  		  loc = &A[offset][outer_column];
+  		  temp0 = *loc;
+  		  temp1 = *(loc+1);
+  		  temp2 = *(loc+2);
+  		  temp3 = *(loc+3);
+
+  		  loc = &B[outer_column][offset];
+  		  *loc = temp0;
+  		  *(loc+64) = temp1;
+  		  *(loc+128) = temp2;
+  		  *(loc+192) = temp3;
+                }
+
+  	      for (offset = outer_row+7; offset > outer_row; offset--)
+                {
+  		  loc = &A[offset][outer_column+4];
+  		  temp0 = *loc;
+  		  temp1 = *(loc+1);
+  		  temp2 = *(loc+2);
+  		  temp3 = *(loc+3);
+
+  		  loc = &B[outer_column+4][offset];
+  		  *loc = temp0;
+  		  *(loc+64) = temp1;
+  		  *(loc+128) = temp2;
+  		  *(loc+192) = temp3;
+                }
+                
+  	      loc = &B[outer_column+4][outer_row];
+  	      *loc = temp4;
+  	      *(loc+64) = temp5;
+  	      *(loc+128) = temp6;
+  	      *(loc+192) = temp7;
+            }
+        }
+  /*   } */
+  }
+
+}
+/* 
+ * You can define additional transpose functions below. We've defined
+ * a simple one below to help you get started. 
+ */ 
+
+/* 
+ * trans - A simple baseline transpose function, not optimized for the cache.
+ */
+char trans_desc[] = "Simple row-wise scan transpose";
+void trans(int M, int N, int A[N][M], int B[M][N])
+{
+  int i, j, tmp;
+
+  for (i = 0; i < N; i++) {
+    for (j = 0; j < M; j++) {
+      tmp = A[i][j];
+      B[j][i] = tmp;
+    }
+  }    
+
+}
+
+/*
+ * registerFunctions - This function registers your transpose
+ *     functions with the driver.  At runtime, the driver will
+ *     evaluate each of the registered functions and summarize their
+ *     performance. This is a handy way to experiment with different
+ *     transpose strategies.
+ */
+void registerFunctions()
+{
+  /* Register your solution function */
+  registerTransFunction(transpose_submit, transpose_submit_desc); 
+
+  /* Register any additional transpose functions */
+  registerTransFunction(trans, trans_desc); 
+
+}
+
+/* 
+ * is_transpose - This helper function checks if B is the transpose of
+ *     A. You can check the correctness of your transpose by calling
+ *     it before returning from the transpose function.
+ */
+int is_transpose(int M, int N, int A[N][M], int B[M][N])
+{
+  int i, j;
+
+  for (i = 0; i < N; i++) {
+    for (j = 0; j < M; ++j) {
+      if (A[i][j] != B[j][i]) {
+	return 0;
+      }
+    }
+  }
+  return 1;
+}
+
